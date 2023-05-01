@@ -1,0 +1,224 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="icon" href="data:">
+<title>惑星カメラ</title>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<span id="description">
+<h1>惑星カメラ</h1>
+<p><a href=https://koseko.asia/>koseko design&amp;press</a>さんの「<a href=https://koseko.asia/project/planet-lens/>惑星発見器</a>」のようなアプリ</p>
+<p>ベースアプリ「<a href=https://wgld.org/d/webgl/w079.html>wgld.org | WebGL: ウェブカメラをテクスチャに適用する |</a>」</p>
+<p><a href=https://github.com/code4fukui/planet-lens/>App src on GitHub</a></p>
+</span>
+
+<style>
+body {
+  margin: 0;
+  padding: 0;
+  background-color: black;
+  text-align: center;
+  font-family: serif;
+  color: #eee;
+}
+a {
+  color: #fff !important;
+}
+#canvas {
+  display: inline-block;
+  width: 100vw;
+  height: 100vw;
+}
+#description {
+  display: inline-block;
+  font-size: 90%;
+}
+@media (min-aspect-ratio: 1.5/1) {
+  #canvas {
+    width: 40vw;
+    height: 40vw;
+  }
+  #description {
+    margin: auto 0;
+    width: 40vw;
+    display: inline-block;
+  }
+}
+</style>
+
+<script type="module">
+// base app sample_079 wgld.org | WebGL: ウェブカメラをテクスチャに適用する 
+//   https://wgld.org/d/webgl/w079.html
+
+import { qtnIV, matIV, cube, sphere } from "./minMatrixb.js";
+import { Camera } from "https://code4fukui.github.io/Camera/Camera.js";
+import { createVertexShader, createFragmentShader, createProgram, setAttribute, createVBO, createIBO } from "./glutil.js";
+
+const vs = `
+attribute vec3 position;
+attribute vec4 color;
+attribute vec2 texCoord;
+uniform   mat4 mvpMatrix;
+varying   vec4 vColor;
+varying   vec2 vTexCoord;
+
+void main(void) {
+  vColor = color;
+  vTexCoord = texCoord;
+  gl_Position  = mvpMatrix * vec4(position, 1.0);
+}
+`;
+
+const fs = `
+precision mediump float;
+
+uniform sampler2D texture;
+varying vec4      vColor;
+varying vec2      vTexCoord;
+
+void main(void) {
+  vec4 smpColor = texture2D(texture, vTexCoord);
+  vec4 c = vColor * smpColor;
+  //vec4 c = vec4(1.0, 1.0, 1.0, 1.0);
+  float x = vTexCoord.x + 0.0;
+  float y = vTexCoord.y + 0.0;
+  float d = sqrt(x * x + y * y);
+  c.r *= d;
+  c.g *= d;
+  c.b *= d;
+  gl_FragColor = c;
+}
+`;
+
+// canvas と クォータニオン、ビデオエレメントをグローバルに扱う
+let c;
+let video;
+const q = new qtnIV();
+const qt = q.identity(q.create());
+
+function useWebcam() {
+  video = document.createElement('video');
+  const camera = new Camera(video, {
+    onFrame: async () => {
+      // use videoElement as image
+    },
+    width: 1280,
+    height: 720,
+    backcamera: true,
+  });
+  camera.start();
+  render();
+}
+
+// オンロードイベント
+onload = function(){
+  // canvasエレメントを取得
+  c = canvas;
+  const w = innerWidth;
+  c.width = c.height = w;
+  onresize = () => {
+    const w = innerWidth;
+    c.width = c.height = w;
+  };
+  useWebcam();
+};
+
+function render() {
+  // webglコンテキストを取得
+  const gl = c.getContext('webgl');
+  
+  // 頂点シェーダとフラグメントシェーダ、プログラムオブジェクトの生成
+  const v_shader = createVertexShader(gl, vs);
+  const f_shader = createFragmentShader(gl, fs);
+  const prg = createProgram(gl, v_shader, f_shader);
+  
+  // attributeLocationを配列に取得
+  const attLocation = new Array();
+  attLocation[0] = gl.getAttribLocation(prg, 'position');
+  attLocation[1] = gl.getAttribLocation(prg, 'color');
+  attLocation[2] = gl.getAttribLocation(prg, 'texCoord');
+  
+  // attributeの要素数を配列に格納
+  const attStride = new Array();
+  attStride[0] = 3;
+  attStride[1] = 3;
+  attStride[2] = 2;
+  
+  // 球体モデル
+  const sphereData = sphere(64, 64, 1.0, [1.0, 1.0, 1.0, 1.0]);
+  const sPosition  = createVBO(gl, sphereData.p);
+  const sColor     = createVBO(gl, sphereData.c);
+  const sTexCoord  = createVBO(gl, sphereData.t);
+  const sVBOList   = [sPosition, sColor, sTexCoord];
+  const sIndex     = createIBO(gl, sphereData.i);
+  
+  // uniformLocationを配列に取得
+  const uniLocation = new Array();
+  uniLocation[0] = gl.getUniformLocation(prg, 'mvpMatrix');
+  uniLocation[1] = gl.getUniformLocation(prg, 'texture');
+  
+  // 各種行列の生成と初期化
+  const m = new matIV();
+  const mMatrix   = m.identity(m.create());
+  const vMatrix   = m.identity(m.create());
+  const pMatrix   = m.identity(m.create());
+  const tmpMatrix = m.identity(m.create());
+  const mvpMatrix = m.identity(m.create());
+  const invMatrix = m.identity(m.create());
+  
+  // 深度テストとカリングを有効にする
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.enable(gl.CULL_FACE);
+  
+  // テクスチャ関連
+  const videoTexture = gl.createTexture(gl.TEXTURE_2D);
+  
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+//  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE, video);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  
+  // 恒常ループ
+  const f = () => {
+    // canvasを初期化
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clearDepth(1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    
+    // テクスチャを更新する
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE, video);
+    
+    // ビュー×プロジェクション座標変換行列
+    const eyePosition = new Array();
+    const camUpDirection = new Array();
+    q.toVecIII([0.0, 0.0, 7.0], qt, eyePosition);
+    q.toVecIII([0.0, 1.0, 0.0], qt, camUpDirection);
+    m.lookAt(eyePosition, [0.0, 0.0, 0.0], camUpDirection, vMatrix);
+    m.perspective(45, c.width / c.height, 0.1, 10.0, pMatrix);
+    m.multiply(pMatrix, vMatrix, tmpMatrix);
+    
+    // 球体をレンダリング
+    setAttribute(gl, sVBOList, attLocation, attStride);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, sIndex);
+    m.identity(mMatrix);
+    m.translate(mMatrix, [0.0, 0.0, 0.0], mMatrix);
+    //m.rotate(mMatrix, rad, [1.0, 1.0, 0.0], mMatrix);
+    m.multiply(tmpMatrix, mMatrix, mvpMatrix);
+    gl.uniformMatrix4fv(uniLocation[0], false, mvpMatrix);
+    gl.uniform1i(uniLocation[1], 0);
+    gl.drawElements(gl.TRIANGLES, sphereData.i.length, gl.UNSIGNED_SHORT, 0);
+        
+    // コンテキストの再描画
+    gl.flush();
+    
+    // ループのために再帰呼び出し
+    requestAnimationFrame(f);
+  };
+  f();
+}
+</script>
+</body>
+</html>
